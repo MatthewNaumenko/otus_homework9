@@ -1,4 +1,24 @@
-# Задание 9
+# Задание 11
+
+## Сборка и запуск
+
+### Windows (MSVC)
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+./build/Release/async_cli.exe
+```
+
+### Linux
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+./build/async_cli
+```
+
+### Результат
+- Консольный вывод: строки вида `bulk: cmd1, cmd2, cmd3`
+- Файлы логов: `logs/bulk<timestamp>_<seq>_t<worker>.log`
 
 ## Условие
 
@@ -36,4 +56,4 @@
 
 ## Самоконтроль
 
-* файл `async.h` должен остаться без изменений
+* файл `async.h` должен остаться без измененийания.
