@@ -3,8 +3,12 @@ name: CI (Linux & Windows)
 on:
   push:
     branches: [ "**" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "**" ]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -28,69 +32,67 @@ jobs:
       - name: Install deps (Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: |
-          choco install ninja -y --no-progress
+        run: choco install ninja -y --no-progress
 
       - name: CCache CMake
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-cmake
 
-      - name: Configure (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+      - name: Configure (Release, Ninja)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
+
+      - name: Package (CPack)
+        run: cmake --build build --parallel --target package
 
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
         run: |
-          BIN=""
-          if [ -f build/bulk ]; then BIN="build/bulk"; fi
-          if [ -z "$BIN" ] && [ -f build/async_cli ]; then BIN="build/async_cli"; fi
-          if [ -n "$BIN" ]; then
-            printf "cmd1\ncmd2\ncmd3\n" | $BIN || true
-          fi
+          if [ -x build/bulk ]; then printf "cmd1\ncmd2\ncmd3\n" | build/bulk || true; fi
+          if [ -x build/bulk_server ]; then printf "cmd1\ncmd2\ncmd3\n" | build/bulk_server || true; fi
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $bin = ""
-          if (Test-Path build/bulk.exe)      { $bin = "build/bulk.exe" }
-          elseif (Test-Path build/async_cli.exe) { $bin = "build/async_cli.exe" }
-          if ($bin -ne "") {
-            "cmd1`ncmd2`ncmd3" | & $bin
-          }
-                    
-      - name: Upload artifacts (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build
-          path: |
-            build/libasync.so
-            build/async_cli
-            build/bulk
-            build/*.log
-          if-no-files-found: ignore
+          if (Test-Path build/bulk.exe) { "cmd1`ncmd2`ncmd3" | & build/bulk.exe }
+          if (Test-Path build/bulk_server.exe) { "cmd1`ncmd2`ncmd3" | & build/bulk_server.exe }
 
-      - name: Upload artifacts (Windows)
-        if: runner.os == 'Windows'
+      - name: Upload artifacts (packages)
         uses: actions/upload-artifact@v4
         with:
-          name: windows-build
+          name: ${{ runner.os }}-packages
           path: |
-            build/async.dll
-            build/async.lib
-            build/async_cli.exe
-            build/bulk.exe
-          if-no-files-found: ignore
+            build/*.tar.gz
+            build/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Linux packages
+        uses: actions/download-artifact@v4
+        with:
+          name: ubuntu-latest-packages
+          path: dist/linux
+
+      - name: Download Windows packages
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-latest-packages
+          path: dist/windows
+
+      - name: Publish Release (archives)
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/linux/*.tar.gz
+            dist/linux/*.zip
+            dist/windows/*.zip

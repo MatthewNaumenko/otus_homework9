@@ -1,12 +1,12 @@
-#include "async.h"  // внешний API (не меняем)
+#include "async.h"
 #include <atomic>
 #include <condition_variable>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -51,6 +51,12 @@ public:
         cv_.notify_all();
     }
 
+    void reset() {
+        std::lock_guard<std::mutex> lk(mx_);
+        q_.clear();
+        stop_ = false;
+    }
+
 private:
     std::mutex mx_;
     std::condition_variable cv_;
@@ -65,60 +71,69 @@ public:
         return d;
     }
 
+    void ensure_running() {
+        std::lock_guard<std::mutex> lk(state_mx_);
+        if (running_) return;
+
+        log_q_.reset();
+        file_q_.reset();
+        stopped_.store(false);
+
+        log_th_   = std::thread([this]{ log_worker(); });
+        file_th_[0] = std::thread([this]{ file_worker(1); });
+        file_th_[1] = std::thread([this]{ file_worker(2); });
+        running_ = true;
+    }
+
     void post_bulk(const std::shared_ptr<Bulk>& b) {
+        ensure_running();
         log_q_.push(b);
         file_q_.push(b);
     }
 
-    // явная остановка потоков
     void shutdown() {
-        bool expected = false;
-        if (!stopped_.compare_exchange_strong(expected, true)) return; // уже остановлены
+        std::lock_guard<std::mutex> lk(state_mx_);
+        if (!running_) return;
+        stopped_.store(true);
         log_q_.stop();
         file_q_.stop();
-        if (log_th_.joinable())   log_th_.join();
+
+        if (log_th_.joinable()) log_th_.join();
         if (file_th_[0].joinable()) file_th_[0].join();
         if (file_th_[1].joinable()) file_th_[1].join();
+
+        running_ = false;
     }
 
 private:
-    Dispatcher() {
-        // лог-поток
-        log_th_ = std::thread([this]{
-            std::shared_ptr<Bulk> b;
-            while (log_q_.pop(b)) {
-                if (!b || b->cmds.empty()) continue;
-                std::ostringstream os;
-                os << "bulk: ";
-                for (size_t i = 0; i < b->cmds.size(); ++i) {
-                    if (i) os << ", ";
-                    os << b->cmds[i];
-                }
-                os << '\n';
-                std::cout << os.str();
+    Dispatcher() { ensure_running(); }
+    ~Dispatcher() { shutdown(); }
+
+    void log_worker() {
+        std::shared_ptr<Bulk> b;
+        while (log_q_.pop(b)) {
+            if (!b || b->cmds.empty()) continue;
+            std::ostringstream os;
+            os << "bulk: ";
+            for (size_t i = 0; i < b->cmds.size(); ++i) {
+                if (i) os << ", ";
+                os << b->cmds[i];
             }
-        });
-
-        // два файловых потока общая очередь
-        file_th_[0] = std::thread([this]{ file_worker(1); });
-        file_th_[1] = std::thread([this]{ file_worker(2); });
-    }
-
-    ~Dispatcher() {
-        shutdown();
+            os << '\n';
+            std::cout << os.str();
+        }
     }
 
     void file_worker(int worker_id) {
-        // всегда пишем в ./logs
         const std::filesystem::path out_dir = std::filesystem::path("logs");
         std::error_code ec;
-        std::filesystem::create_directories(out_dir, ec); 
+        std::filesystem::create_directories(out_dir, ec);
 
         std::shared_ptr<Bulk> b;
-        static std::atomic<unsigned long long> seq{0}; // общий счётчик
+        static std::atomic<unsigned long long> seq{0};
+
         while (file_q_.pop(b)) {
             if (!b || b->cmds.empty()) continue;
-
             const auto local_seq = ++seq;
 
             std::ostringstream fname;
@@ -128,7 +143,6 @@ private:
                   << ".log";
 
             const auto path = out_dir / fname.str();
-
             std::ofstream ofs(path, std::ios::out | std::ios::trunc | std::ios::binary);
             if (!ofs) {
                 std::cerr << "[file" << worker_id << "] can't open " << path.string() << "\n";
@@ -141,25 +155,20 @@ private:
                 ofs << b->cmds[i];
             }
             ofs << '\n';
-
             ofs.flush();
             ofs.close();
         }
     }
 
-private:
     BlockingQueue<std::shared_ptr<Bulk>> log_q_;
     BlockingQueue<std::shared_ptr<Bulk>> file_q_;
     std::thread log_th_;
     std::thread file_th_[2];
-    std::atomic<bool> stopped_{false};
-};
 
-struct DispatcherInit {
-    DispatcherInit()  { (void)Dispatcher::instance(); }
-    ~DispatcherInit() = default;
+    std::atomic<bool> stopped_{false};
+    std::mutex state_mx_;
+    bool running_ = false;
 };
-static DispatcherInit g_dispatcher_init;
 
 struct Context {
     explicit Context(std::size_t n) : N(n) {}
@@ -175,11 +184,9 @@ struct Context {
             on_line(partial_);
         }
         partial_.clear();
-
         if (depth == 0) {
             flush_if_needed();
         } else {
-            // внутри динамического блока всё игнорирутся
             buf.clear();
             first_ts = 0;
             depth = 0;
@@ -205,7 +212,7 @@ private:
     }
 
     void on_close() {
-        if (depth == 0) return; 
+        if (depth == 0) return;
         --depth;
         if (depth == 0) flush_if_needed();
     }
@@ -226,7 +233,6 @@ private:
         b->first_ts = first_ts;
 
         Dispatcher::instance().post_bulk(b);
-
         buf.clear();
         first_ts = 0;
     }
@@ -240,21 +246,21 @@ public:
     int depth = 0;
 };
 
-// счётчик активных контекстов
 static std::atomic<int> g_active_contexts{0};
 
 handle_t connect(std::size_t bulk) {
     try {
         if (bulk == 0) return nullptr;
-        (void)Dispatcher::instance(); 
+        Dispatcher::instance().ensure_running();  
+        auto* ctx = new Context(bulk);
         g_active_contexts.fetch_add(1, std::memory_order_relaxed);
-        return new Context(bulk);
+        return ctx;
     } catch (...) {
         return nullptr;
     }
 }
 
-void receive(handle_t handle, const char *data, std::size_t size) {
+void receive(handle_t handle, const char* data, std::size_t size) {
     if (!handle || !data || size == 0) return;
     auto* ctx = static_cast<Context*>(handle);
     std::lock_guard<std::mutex> lk(ctx->mx);
@@ -268,9 +274,8 @@ void disconnect(handle_t handle) {
         std::lock_guard<std::mutex> lk(ctx->mx);
         ctx->on_eof();
     }
-    // если это был последний контекст корректно останавливаем диспетчер
     if (g_active_contexts.fetch_sub(1, std::memory_order_relaxed) == 1) {
-        Dispatcher::instance().shutdown();
+        Dispatcher::instance().shutdown(); 
     }
 }
 

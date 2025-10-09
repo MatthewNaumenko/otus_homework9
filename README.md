@@ -34,6 +34,43 @@
 
 Будет отмечено отсутствие ограничений на вызов из разных потоков и взятая за основу многопоточная версия задания.
 
+## Сборка и запуск
+
+### Windows (MSVC)
+
+#### Сборка
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+# Пакеты создаются автоматически: async-1.0.0-win64.tar.gz и async-1.0.0-win64.zip
+```
+
+#### Запуск
+```bash
+# Демо-приложение
+./build/Release/bulk.exe
+```
+
+### Linux
+```bash
+# Установка зависимостей
+sudo apt update
+sudo apt install -y build-essential cmake
+
+# Сборка
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+# Пакеты создаются автоматически: async-1.0.0-Linux.tar.gz и async-1.0.0-Linux.zip
+
+# Запуск
+./build/bulk
+```
+
+### Результат
+- **Консольный вывод**: строки вида `bulk: cmd1, cmd2, cmd3`
+- **Файлы логов**: `logs/bulk<timestamp>_<seq>_t<worker>.log`
+- **Библиотека**: `libasync.so` (Linux) / `async.dll` (Windows)
+
 ## Самоконтроль
 
 * файл `async.h` должен остаться без изменений
