@@ -1,0 +1,96 @@
+name: CI (Linux & Windows)
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build
+
+      - name: Install deps (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install ninja -y --no-progress
+
+      - name: CCache CMake
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-cmake
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          BIN=""
+          if [ -f build/bulk ]; then BIN="build/bulk"; fi
+          if [ -z "$BIN" ] && [ -f build/async_cli ]; then BIN="build/async_cli"; fi
+          if [ -n "$BIN" ]; then
+            printf "cmd1\ncmd2\ncmd3\n" | $BIN || true
+          fi
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $bin = ""
+          if (Test-Path build/bulk.exe)      { $bin = "build/bulk.exe" }
+          elseif (Test-Path build/async_cli.exe) { $bin = "build/async_cli.exe" }
+          if ($bin -ne "") {
+            "cmd1`ncmd2`ncmd3" | & $bin
+          }
+                    
+      - name: Upload artifacts (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: |
+            build/libasync.so
+            build/async_cli
+            build/bulk
+            build/*.log
+          if-no-files-found: ignore
+
+      - name: Upload artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: |
+            build/async.dll
+            build/async.lib
+            build/async_cli.exe
+            build/bulk.exe
+          if-no-files-found: ignore
