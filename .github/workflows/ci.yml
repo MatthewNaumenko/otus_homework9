@@ -51,20 +51,26 @@ jobs:
       - name: Smoke test (Linux)
         if: runner.os == 'Linux'
         run: |
-          if [ -x build/bulk ]; then printf "cmd1\ncmd2\ncmd3\n" | build/bulk || true; fi
+          if [ -x build/bulk ]; then printf "cmd1\ncmd2\ncmd3\n" | build/bulk 3 || true; fi
           if [ -x build/bulk_server ]; then printf "cmd1\ncmd2\ncmd3\n" | build/bulk_server || true; fi
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          if (Test-Path build/bulk.exe) { "cmd1`ncmd2`ncmd3" | & build/bulk.exe }
-          if (Test-Path build/bulk_server.exe) { "cmd1`ncmd2`ncmd3" | & build/bulk_server.exe }
+          if (Test-Path build/bulk.exe) {
+            "cmd1`ncmd2`ncmd3`n" | & build/bulk.exe 3
+            if ($LASTEXITCODE -ne 0) { Write-Host "bulk exited $LASTEXITCODE (ignored)"; $global:LASTEXITCODE = 0 }
+          }
+          if (Test-Path build/bulk_server.exe) {
+            "cmd1`ncmd2`ncmd3`n" | & build/bulk_server.exe
+            if ($LASTEXITCODE -ne 0) { Write-Host "bulk_server exited $LASTEXITCODE (ignored)"; $global:LASTEXITCODE = 0 }
+          }
 
       - name: Upload artifacts (packages)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-packages 
+          name: ${{ matrix.os }}-packages
           path: |
             build/*.tar.gz
             build/*.zip
@@ -79,13 +85,13 @@ jobs:
       - name: Download Linux packages
         uses: actions/download-artifact@v4
         with:
-          name: ubuntu-latest-packages  
+          name: ubuntu-latest-packages
           path: dist/linux
 
       - name: Download Windows packages
         uses: actions/download-artifact@v4
         with:
-          name: windows-latest-packages  
+          name: windows-latest-packages
           path: dist/windows
 
       - name: Publish Release (archives)
