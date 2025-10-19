@@ -64,7 +64,7 @@ jobs:
       - name: Upload artifacts (packages)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-packages   # <-- ключевое изменение
+          name: ${{ matrix.os }}-packages 
           path: |
             build/*.tar.gz
             build/*.zip
@@ -79,13 +79,13 @@ jobs:
       - name: Download Linux packages
         uses: actions/download-artifact@v4
         with:
-          name: ubuntu-latest-packages    # <-- совпадает с upload
+          name: ubuntu-latest-packages  
           path: dist/linux
 
       - name: Download Windows packages
         uses: actions/download-artifact@v4
         with:
-          name: windows-latest-packages   # <-- совпадает с upload
+          name: windows-latest-packages  
           path: dist/windows
 
       - name: Publish Release (archives)
