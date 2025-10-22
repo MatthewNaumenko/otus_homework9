@@ -86,7 +86,6 @@ public:
     }
 
     void post_bulk(const std::shared_ptr<Bulk>& b) {
-        ensure_running();
         log_q_.push(b);
         file_q_.push(b);
     }
@@ -251,9 +250,11 @@ static std::atomic<int> g_active_contexts{0};
 handle_t connect(std::size_t bulk) {
     try {
         if (bulk == 0) return nullptr;
-        Dispatcher::instance().ensure_running();  
         auto* ctx = new Context(bulk);
-        g_active_contexts.fetch_add(1, std::memory_order_relaxed);
+        auto prev = g_active_contexts.fetch_add(1, std::memory_order_relaxed);
+        if (prev == 0) {
+            Dispatcher::instance().ensure_running();
+        }
         return ctx;
     } catch (...) {
         return nullptr;
